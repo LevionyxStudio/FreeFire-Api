@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import json
+import os
 import time
 from datetime import datetime, timedelta
 from Utilities.until import load_accounts
@@ -15,11 +16,25 @@ app = Flask(__name__)
 # Enable CORS for all origins on all routes
 CORS(app)
 
+# ── API Key Authentication ────────────────────────────────────────────────────
+API_KEY = os.environ.get("R4X_API_KEY")
+
+def verify_api_key():
+    """Return a 401 response if the x-api-key header is missing or incorrect."""
+    key = request.headers.get("x-api-key")
+    if not key or key != API_KEY:
+        return jsonify({"error": "Unauthorized", "message": "Invalid or missing API key."}), 401
+    return None
+# ─────────────────────────────────────────────────────────────────────────────
+
 
 
 
 @app.route('/get_search_account_by_keyword', methods=['GET'])
 def get_search_account_by_keyword():
+    auth_error = verify_api_key()
+    if auth_error:
+        return auth_error
     try:
         # Get request parameters
         region = request.args.get('server', 'IND').upper()
@@ -61,6 +76,9 @@ def get_search_account_by_keyword():
 
 @app.route('/get_player_stats', methods=['GET'])
 def get_player_stat():
+    auth_error = verify_api_key()
+    if auth_error:
+        return auth_error
     try:
         # Get and validate parameters
         server = request.args.get('server', 'IND').upper()
@@ -213,6 +231,9 @@ def get_player_stat():
 
 @app.route('/get_player_personal_show', methods=['GET'])
 def get_account_info():
+    auth_error = verify_api_key()
+    if auth_error:
+        return auth_error
     try:
         # Get parameters with defaults
         server = request.args.get('server', 'IND').upper()
