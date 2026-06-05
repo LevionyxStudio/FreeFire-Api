@@ -443,5 +443,164 @@ def get_account_info():
 
 
 
+@app.route('/get_player_full', methods=['GET'])
+def get_player_full():
+    auth_error = verify_api_key()
+    if auth_error:
+        return auth_error
+    try:
+        # Get and validate parameters
+        server = request.args.get('server', 'IND').upper()
+        uid = request.args.get('uid')
+
+        # Validate uid parameter
+        if not uid:
+            return jsonify({
+                "success": False,
+                "error": "Missing required parameter",
+                "message": "UID parameter is required"
+            }), 400
+
+        if not uid.isdigit():
+            return jsonify({
+                "success": False,
+                "error": "Invalid UID",
+                "message": "UID must be a numeric value"
+            }), 400
+
+        # Validate server
+        if server not in accounts:
+            return jsonify({
+                "success": False,
+                "error": "Invalid server",
+                "message": f"Server '{server}' not found. Available servers: {list(accounts.keys())}"
+            }), 400
+
+        # ── Step 1: Get Garena token ─────────────────────────────────────────
+        try:
+            garena_token_result = get_garena_token(accounts[server]['uid'], accounts[server]['password'])
+            if not garena_token_result or 'access_token' not in garena_token_result or 'open_id' not in garena_token_result:
+                return jsonify({
+                    "success": False,
+                    "error": "Garena authentication failed",
+                    "message": "Failed to obtain Garena access token"
+                }), 401
+        except Exception as e:
+            return jsonify({
+                "success": False,
+                "error": "Garena authentication error",
+                "message": f"Failed to authenticate with Garena: {str(e)}"
+            }), 502
+
+        # ── Step 2: Get Major login ──────────────────────────────────────────
+        try:
+            major_login_result = get_major_login(garena_token_result["access_token"], garena_token_result["open_id"])
+            if not major_login_result or 'token' not in major_login_result or 'serverUrl' not in major_login_result:
+                return jsonify({
+                    "success": False,
+                    "error": "Major login failed",
+                    "message": "Failed to obtain Major login token"
+                }), 401
+        except Exception as e:
+            return jsonify({
+                "success": False,
+                "error": "Major login error",
+                "message": f"Failed to login to Major: {str(e)}"
+            }), 502
+
+        auth_token = major_login_result["token"]
+        server_url = major_login_result["serverUrl"]
+
+        # ── Step 3: Search for IGN + level using uid as keyword ──────────────
+        ign = None
+        level = None
+        try:
+            search_results = search_account_by_keyword(server_url, auth_token, uid)
+            # The response contains an accountList; find the exact uid match
+            account_list = search_results.get("accountList", [])
+            for account in account_list:
+                if str(account.get("accountId", "")) == str(uid):
+                    ign = account.get("nickname")
+                    level = account.get("level")
+                    break
+            # Fallback: use the first result if no exact match found
+            if ign is None and account_list:
+                first = account_list[0]
+                ign = first.get("nickname")
+                level = first.get("level")
+        except Exception as e:
+            return jsonify({
+                "success": False,
+                "error": "Account search failed",
+                "message": f"Failed to fetch player IGN/level: {str(e)}"
+            }), 502
+
+        # ── Step 4: Fetch BR ranked stats ────────────────────────────────────
+        br_stats = None
+        try:
+            br_stats = get_player_stats(auth_token, server_url, "br", uid, "RANKED")
+        except ValueError as e:
+            return jsonify({
+                "success": False,
+                "error": "Invalid request parameters",
+                "message": str(e)
+            }), 400
+        except ConnectionError as e:
+            return jsonify({
+                "success": False,
+                "error": "Connection error while fetching BR stats",
+                "message": str(e)
+            }), 503
+        except Exception as e:
+            return jsonify({
+                "success": False,
+                "error": "BR stats retrieval failed",
+                "message": f"Failed to retrieve BR ranked stats: {str(e)}"
+            }), 500
+
+        # ── Step 5: Fetch CS ranked stats ────────────────────────────────────
+        cs_stats = None
+        try:
+            cs_stats = get_player_stats(auth_token, server_url, "cs", uid, "RANKED")
+        except ValueError as e:
+            return jsonify({
+                "success": False,
+                "error": "Invalid request parameters",
+                "message": str(e)
+            }), 400
+        except ConnectionError as e:
+            return jsonify({
+                "success": False,
+                "error": "Connection error while fetching CS stats",
+                "message": str(e)
+            }), 503
+        except Exception as e:
+            return jsonify({
+                "success": False,
+                "error": "CS stats retrieval failed",
+                "message": f"Failed to retrieve CS ranked stats: {str(e)}"
+            }), 500
+
+        # ── Return combined response ─────────────────────────────────────────
+        return jsonify({
+            "success": True,
+            "data": {
+                "uid": uid,
+                "ign": ign,
+                "level": level,
+                "server": server,
+                "br_ranked": br_stats,
+                "cs_ranked": cs_stats
+            }
+        }), 200
+
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": "Internal server error",
+            "message": "An unexpected error occurred while processing your request"
+        }), 500
+
+
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
